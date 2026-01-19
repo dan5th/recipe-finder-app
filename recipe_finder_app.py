@@ -73,6 +73,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# PDF folder location
+PDF_FOLDER = "pdfs"
+
+
 @st.cache_data
 def load_recipes():
     """Load recipe data from JSON file."""
@@ -278,12 +282,18 @@ def main():
                 st.session_state.selected_recipe = None
                 st.rerun()
 
-        # Display PDF
-        pdf_path = Path(__file__).parent / recipe['filename']
+        # Display PDF - look in pdfs/ subfolder
+        pdf_path = Path(__file__).parent / PDF_FOLDER / recipe['filename']
         if pdf_path.exists():
             display_pdf(pdf_path)
         else:
-            st.error(f"PDF file not found: {recipe['filename']}")
+            # Fallback: check root folder for backwards compatibility
+            pdf_path_root = Path(__file__).parent / recipe['filename']
+            if pdf_path_root.exists():
+                display_pdf(pdf_path_root)
+            else:
+                st.error(f"PDF file not found: {recipe['filename']}")
+                st.info(f"Please ensure the PDF is in the '{PDF_FOLDER}/' folder.")
 
     else:
         # Show search results

@@ -10,9 +10,9 @@ A Streamlit app that helps you find recipes based on ingredients you have on han
 - **PDF Preview**: View recipe PDFs directly in the app
 - **Quick Add**: Common ingredients available as one-click buttons
 
-## Screenshot
+## Live Demo
 
-![Recipe Finder App](screenshot.png)
+[View on Streamlit Community Cloud](https://your-app-url.streamlit.app)
 
 ## Installation
 
@@ -34,6 +34,20 @@ A Streamlit app that helps you find recipes based on ingredients you have on han
 
 4. Open your browser to `http://localhost:8501`
 
+## Project Structure
+
+```
+recipe-finder-app/
+├── recipe_finder_app.py    # Main Streamlit application
+├── recipes_data.json       # Recipe database with ingredients
+├── requirements.txt        # Python dependencies
+├── README.md
+└── pdfs/                   # Recipe PDF files
+    ├── recipe-name-1.pdf
+    ├── recipe-name-2.pdf
+    └── ...
+```
+
 ## Usage
 
 1. Add ingredients using the sidebar:
@@ -46,29 +60,32 @@ A Streamlit app that helps you find recipes based on ingredients you have on han
 
 4. Click "Back to Results" to return to search
 
-## Files
-
-- `recipe_finder_app.py` - Main Streamlit application
-- `recipes_data.json` - Recipe database with ingredients
-- `requirements.txt` - Python dependencies
-
 ## Adding Your Own Recipes
 
-The `recipes_data.json` file contains recipe data in this format:
+1. Place PDF files in the `pdfs/` folder
 
-```json
-{
-  "name": "Recipe Name",
-  "filename": "recipe-file.pdf",
-  "ingredients_raw": ["1 cup flour", "2 eggs"],
-  "ingredients_normalized": ["flour", "eggs"],
-  "ingredient_count": 2
-}
-```
+2. Add entries to `recipes_data.json`:
+   ```json
+   {
+     "name": "Recipe Name",
+     "filename": "recipe-file.pdf",
+     "ingredients_raw": ["1 cup flour", "2 eggs"],
+     "ingredients_normalized": ["flour", "eggs"],
+     "ingredient_count": 2
+   }
+   ```
 
-To add recipes:
-1. Place PDF files in the same directory as the app
-2. Add entries to `recipes_data.json` with normalized ingredient names
+## Deployment to Streamlit Community Cloud
+
+1. Push your code to GitHub (including the `pdfs/` folder)
+
+2. Go to [share.streamlit.io](https://share.streamlit.io)
+
+3. Connect your GitHub repo
+
+4. Deploy!
+
+**Note:** Large PDF collections will increase your repo size. Consider using [Git LFS](https://git-lfs.github.com/) for better handling of large files.
 
 ## License
 
