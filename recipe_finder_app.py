@@ -9,7 +9,9 @@ import streamlit as st
 import json
 import re
 import base64
+import requests
 from pathlib import Path
+from urllib.parse import quote
 
 # Page config
 st.set_page_config(
@@ -17,6 +19,22 @@ st.set_page_config(
     page_icon="🍳",
     layout="wide"
 )
+
+# =============================================================================
+# CONFIGURATION - Update this with your OneDrive shared folder link
+# =============================================================================
+# Instructions:
+# 1. Upload your PDFs to a OneDrive folder
+# 2. Right-click the folder > Share > "Anyone with the link can view"
+# 3. Copy the share link and paste it below
+# 4. The link should look like: https://1drv.ms/f/s!ABC123...
+#
+# Leave empty to use local PDFs from the 'pdfs/' folder instead
+ONEDRIVE_SHARE_LINK = "https://1drv.ms/f/c/dfbdab8e14325b0e/IgAOWzIUjqu9IIDfDfUBAAAAAW1NBapKYLKoqEEY5TeeV3Q?e=ypNjBX"
+
+# For local PDF fallback
+PDF_FOLDER = "pdfs"
+# =============================================================================
 
 # Custom CSS
 st.markdown("""
@@ -73,8 +91,82 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# PDF folder location
-PDF_FOLDER = "pdfs"
+def get_onedrive_base_url():
+    """Convert OneDrive share link to direct download base URL."""
+    if not ONEDRIVE_SHARE_LINK:
+        return None
+
+    # OneDrive share links need to be converted to direct download URLs
+    # Format: https://1drv.ms/f/s!XXXX -> base URL for files
+
+    # For folder shares, we need to use the OneDrive embed/download approach
+    # The share link encodes the folder path
+
+    try:
+        # Convert share link to base64 and create embed URL
+        # This is the standard OneDrive URL conversion
+        share_link = ONEDRIVE_SHARE_LINK.strip()
+
+        # Encode the share URL for OneDrive's API format
+        # Remove trailing slashes
+        share_link = share_link.rstrip('/')
+
+        # Create base64 encoding (OneDrive's method)
+        encoded = base64.urlsafe_b64encode(share_link.encode()).decode()
+        # Remove padding and prefix with 'u!'
+        encoded = 'u!' + encoded.rstrip('=')
+
+        # Construct the base API URL
+        base_url = f"https://api.onedrive.com/v1.0/shares/{encoded}/root/children"
+
+        return share_link
+    except Exception as e:
+        st.error(f"Error processing OneDrive link: {e}")
+        return None
+
+
+def get_onedrive_direct_url(filename):
+    """Get direct download URL for a file in the shared OneDrive folder."""
+    if not ONEDRIVE_SHARE_LINK:
+        return None
+
+    try:
+        share_link = ONEDRIVE_SHARE_LINK.strip().rstrip('/')
+
+        # Encode the share URL using OneDrive's base64 method
+        encoded = base64.urlsafe_b64encode(share_link.encode()).decode()
+        encoded = 'u!' + encoded.rstrip('=')
+
+        # URL encode the filename
+        encoded_filename = quote(filename)
+
+        # Construct direct download URL
+        # This uses OneDrive's sharing API to get file content
+        download_url = f"https://api.onedrive.com/v1.0/shares/{encoded}/root:/{encoded_filename}:/content"
+
+        return download_url
+    except Exception as e:
+        st.error(f"Error creating download URL: {e}")
+        return None
+
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def fetch_pdf_from_onedrive(filename):
+    """Fetch PDF content from OneDrive."""
+    url = get_onedrive_direct_url(filename)
+    if not url:
+        return None
+
+    try:
+        response = requests.get(url, timeout=30, allow_redirects=True)
+        if response.status_code == 200:
+            return response.content
+        else:
+            st.error(f"Failed to fetch PDF: HTTP {response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error fetching PDF: {e}")
+        return None
 
 
 @st.cache_data
@@ -164,11 +256,10 @@ def find_matching_recipes(recipes, user_ingredients):
     return results
 
 
-def display_pdf(pdf_path):
-    """Display PDF in Streamlit."""
+def display_pdf_from_bytes(pdf_bytes):
+    """Display PDF from bytes in Streamlit."""
     try:
-        with open(pdf_path, "rb") as f:
-            base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+        base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
 
         pdf_display = f'''
             <iframe
@@ -182,8 +273,50 @@ def display_pdf(pdf_path):
         st.markdown(pdf_display, unsafe_allow_html=True)
         return True
     except Exception as e:
+        st.error(f"Error displaying PDF: {e}")
+        return False
+
+
+def display_pdf_from_file(pdf_path):
+    """Display PDF from local file in Streamlit."""
+    try:
+        with open(pdf_path, "rb") as f:
+            return display_pdf_from_bytes(f.read())
+    except Exception as e:
         st.error(f"Error loading PDF: {e}")
         return False
+
+
+def display_recipe_pdf(filename):
+    """Display PDF, trying OneDrive first, then local fallback."""
+
+    # Try OneDrive if configured
+    if ONEDRIVE_SHARE_LINK:
+        with st.spinner("Loading recipe from OneDrive..."):
+            pdf_bytes = fetch_pdf_from_onedrive(filename)
+            if pdf_bytes:
+                return display_pdf_from_bytes(pdf_bytes)
+            else:
+                st.warning("Could not load from OneDrive, trying local file...")
+
+    # Fallback to local file
+    pdf_path = Path(__file__).parent / PDF_FOLDER / filename
+    if pdf_path.exists():
+        return display_pdf_from_file(pdf_path)
+
+    # Try root folder
+    pdf_path_root = Path(__file__).parent / filename
+    if pdf_path_root.exists():
+        return display_pdf_from_file(pdf_path_root)
+
+    # No PDF found
+    st.error(f"PDF file not found: {filename}")
+    if ONEDRIVE_SHARE_LINK:
+        st.info("Make sure the PDF exists in your shared OneDrive folder with the exact filename.")
+    else:
+        st.info(f"Please add your OneDrive share link in the app configuration, or place PDFs in the '{PDF_FOLDER}/' folder.")
+
+    return False
 
 
 def main():
@@ -262,10 +395,12 @@ def main():
         st.divider()
 
         # Stats
+        storage_mode = "☁️ OneDrive" if ONEDRIVE_SHARE_LINK else "📁 Local"
         st.markdown(f"""
         <div class="stats-box">
             <h4>📊 Database</h4>
             <p><strong>{len(recipes)}</strong> recipes</p>
+            <p style="font-size: 0.8rem; opacity: 0.9;">{storage_mode}</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -282,18 +417,8 @@ def main():
                 st.session_state.selected_recipe = None
                 st.rerun()
 
-        # Display PDF - look in pdfs/ subfolder
-        pdf_path = Path(__file__).parent / PDF_FOLDER / recipe['filename']
-        if pdf_path.exists():
-            display_pdf(pdf_path)
-        else:
-            # Fallback: check root folder for backwards compatibility
-            pdf_path_root = Path(__file__).parent / recipe['filename']
-            if pdf_path_root.exists():
-                display_pdf(pdf_path_root)
-            else:
-                st.error(f"PDF file not found: {recipe['filename']}")
-                st.info(f"Please ensure the PDF is in the '{PDF_FOLDER}/' folder.")
+        # Display PDF (from OneDrive or local)
+        display_recipe_pdf(recipe['filename'])
 
     else:
         # Show search results
