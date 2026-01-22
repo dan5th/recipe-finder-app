@@ -91,78 +91,75 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def get_onedrive_base_url():
-    """Convert OneDrive share link to direct download base URL."""
+def encode_onedrive_share_link(share_url):
+    """Encode a OneDrive share URL to the format needed for API access."""
+    # OneDrive's encoding: base64 encode the URL, then make it URL-safe
+    # and prefix with 'u!'
+    encoded = base64.urlsafe_b64encode(share_url.encode()).decode()
+    # Remove padding '=' and prefix with 'u!'
+    return 'u!' + encoded.rstrip('=')
+
+
+@st.cache_data(ttl=3600)
+def get_onedrive_folder_contents():
+    """Get list of files in the shared OneDrive folder."""
     if not ONEDRIVE_SHARE_LINK:
-        return None
-
-    # OneDrive share links need to be converted to direct download URLs
-    # Format: https://1drv.ms/f/s!XXXX -> base URL for files
-
-    # For folder shares, we need to use the OneDrive embed/download approach
-    # The share link encodes the folder path
+        return {}
 
     try:
-        # Convert share link to base64 and create embed URL
-        # This is the standard OneDrive URL conversion
-        share_link = ONEDRIVE_SHARE_LINK.strip()
+        share_link = ONEDRIVE_SHARE_LINK.strip().split('?')[0]  # Remove query params
+        encoded = encode_onedrive_share_link(share_link)
 
-        # Encode the share URL for OneDrive's API format
-        # Remove trailing slashes
-        share_link = share_link.rstrip('/')
+        # Get folder contents
+        api_url = f"https://api.onedrive.com/v1.0/shares/{encoded}/driveItem/children"
 
-        # Create base64 encoding (OneDrive's method)
-        encoded = base64.urlsafe_b64encode(share_link.encode()).decode()
-        # Remove padding and prefix with 'u!'
-        encoded = 'u!' + encoded.rstrip('=')
-
-        # Construct the base API URL
-        base_url = f"https://api.onedrive.com/v1.0/shares/{encoded}/root/children"
-
-        return share_link
+        response = requests.get(api_url, timeout=30)
+        if response.status_code == 200:
+            data = response.json()
+            # Create a mapping of filename -> download URL
+            file_map = {}
+            for item in data.get('value', []):
+                if item.get('name', '').lower().endswith('.pdf'):
+                    # Get the download URL from @microsoft.graph.downloadUrl
+                    download_url = item.get('@microsoft.graph.downloadUrl') or item.get('@content.downloadUrl')
+                    if download_url:
+                        file_map[item['name']] = download_url
+            return file_map
+        else:
+            return {}
     except Exception as e:
-        st.error(f"Error processing OneDrive link: {e}")
-        return None
-
-
-def get_onedrive_direct_url(filename):
-    """Get direct download URL for a file in the shared OneDrive folder."""
-    if not ONEDRIVE_SHARE_LINK:
-        return None
-
-    try:
-        share_link = ONEDRIVE_SHARE_LINK.strip().rstrip('/')
-
-        # Encode the share URL using OneDrive's base64 method
-        encoded = base64.urlsafe_b64encode(share_link.encode()).decode()
-        encoded = 'u!' + encoded.rstrip('=')
-
-        # URL encode the filename
-        encoded_filename = quote(filename)
-
-        # Construct direct download URL
-        # This uses OneDrive's sharing API to get file content
-        download_url = f"https://api.onedrive.com/v1.0/shares/{encoded}/root:/{encoded_filename}:/content"
-
-        return download_url
-    except Exception as e:
-        st.error(f"Error creating download URL: {e}")
-        return None
+        st.error(f"Error listing OneDrive folder: {e}")
+        return {}
 
 
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def fetch_pdf_from_onedrive(filename):
     """Fetch PDF content from OneDrive."""
-    url = get_onedrive_direct_url(filename)
-    if not url:
+    if not ONEDRIVE_SHARE_LINK:
+        return None
+
+    # First, try to get the direct download URL from folder listing
+    file_map = get_onedrive_folder_contents()
+
+    download_url = file_map.get(filename)
+
+    if not download_url:
+        # Try case-insensitive match
+        for name, url in file_map.items():
+            if name.lower() == filename.lower():
+                download_url = url
+                break
+
+    if not download_url:
+        st.warning(f"File '{filename}' not found in OneDrive folder. Available: {len(file_map)} files")
         return None
 
     try:
-        response = requests.get(url, timeout=30, allow_redirects=True)
+        response = requests.get(download_url, timeout=60, allow_redirects=True)
         if response.status_code == 200:
             return response.content
         else:
-            st.error(f"Failed to fetch PDF: HTTP {response.status_code}")
+            st.error(f"Failed to download PDF: HTTP {response.status_code}")
             return None
     except requests.exceptions.RequestException as e:
         st.error(f"Network error fetching PDF: {e}")
